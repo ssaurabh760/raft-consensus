@@ -1,5 +1,7 @@
 # Binaries
 bin/
+/raft
+/raft-node
 *.exe
 *.exe~
 *.dll
