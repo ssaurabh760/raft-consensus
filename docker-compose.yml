@@ -1,0 +1,103 @@
+version: "3.8"
+
+services:
+  node1:
+    build: .
+    container_name: raft-node-1
+    command:
+      - "-id=1"
+      - "-listen=:9001"
+      - "-http=:8001"
+      - "-peers=2=node2:9002,3=node3:9003,4=node4:9004,5=node5:9005"
+      - "-data=/data"
+    ports:
+      - "8001:8001"
+      - "9001:9001"
+    volumes:
+      - node1-data:/data
+    networks:
+      - raft-net
+    restart: unless-stopped
+
+  node2:
+    build: .
+    container_name: raft-node-2
+    command:
+      - "-id=2"
+      - "-listen=:9002"
+      - "-http=:8002"
+      - "-peers=1=node1:9001,3=node3:9003,4=node4:9004,5=node5:9005"
+      - "-data=/data"
+    ports:
+      - "8002:8002"
+      - "9002:9002"
+    volumes:
+      - node2-data:/data
+    networks:
+      - raft-net
+    restart: unless-stopped
+
+  node3:
+    build: .
+    container_name: raft-node-3
+    command:
+      - "-id=3"
+      - "-listen=:9003"
+      - "-http=:8003"
+      - "-peers=1=node1:9001,2=node2:9002,4=node4:9004,5=node5:9005"
+      - "-data=/data"
+    ports:
+      - "8003:8003"
+      - "9003:9003"
+    volumes:
+      - node3-data:/data
+    networks:
+      - raft-net
+    restart: unless-stopped
+
+  node4:
+    build: .
+    container_name: raft-node-4
+    command:
+      - "-id=4"
+      - "-listen=:9004"
+      - "-http=:8004"
+      - "-peers=1=node1:9001,2=node2:9002,3=node3:9003,5=node5:9005"
+      - "-data=/data"
+    ports:
+      - "8004:8004"
+      - "9004:9004"
+    volumes:
+      - node4-data:/data
+    networks:
+      - raft-net
+    restart: unless-stopped
+
+  node5:
+    build: .
+    container_name: raft-node-5
+    command:
+      - "-id=5"
+      - "-listen=:9005"
+      - "-http=:8005"
+      - "-peers=1=node1:9001,2=node2:9002,3=node3:9003,4=node4:9004"
+      - "-data=/data"
+    ports:
+      - "8005:8005"
+      - "9005:9005"
+    volumes:
+      - node5-data:/data
+    networks:
+      - raft-net
+    restart: unless-stopped
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+  node4-data:
+  node5-data:
+
+networks:
+  raft-net:
+    driver: bridge
