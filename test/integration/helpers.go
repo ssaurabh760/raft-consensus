@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/saurabhsrivastava/raft-consensus-go/internal/persistence"
 	"github.com/saurabhsrivastava/raft-consensus-go/internal/raft"
 	"github.com/saurabhsrivastava/raft-consensus-go/internal/transport"
 )
@@ -14,6 +15,7 @@ type TestCluster struct {
 	Nodes   []*raft.RaftNode
 	Network *transport.MockNetwork
 	nodeIDs []int
+	stores  map[int]persistence.Storage // per-node storage for restart tests
 }
 
 // NewTestCluster creates a new test cluster with the given number of nodes.
@@ -57,7 +59,70 @@ func NewTestCluster(numNodes int) *TestCluster {
 		Nodes:   nodes,
 		Network: network,
 		nodeIDs: nodeIDs,
+		stores:  make(map[int]persistence.Storage),
 	}
+}
+
+// NewTestClusterWithPersistence creates a cluster where each node has an in-memory
+// persistent store, enabling restart/recovery tests.
+func NewTestClusterWithPersistence(numNodes int) *TestCluster {
+	cluster := NewTestCluster(numNodes)
+	for i, node := range cluster.Nodes {
+		store := persistence.NewMemoryStore()
+		cluster.stores[cluster.nodeIDs[i]] = store
+		node.SetStorage(store)
+	}
+	return cluster
+}
+
+// RestartNode stops a node and creates a new one with the same ID and persistent
+// storage, simulating a crash and restart. Returns the new node.
+func (c *TestCluster) RestartNode(id int) (*raft.RaftNode, error) {
+	// Find and stop the old node.
+	var oldIdx int = -1
+	for i, node := range c.Nodes {
+		if node.GetID() == id {
+			node.Stop()
+			oldIdx = i
+			break
+		}
+	}
+	if oldIdx == -1 {
+		return nil, fmt.Errorf("node %d not found", id)
+	}
+
+	// Build peers list.
+	peers := make([]int, 0, len(c.nodeIDs)-1)
+	for _, nid := range c.nodeIDs {
+		if nid != id {
+			peers = append(peers, nid)
+		}
+	}
+
+	cfg := &raft.Config{
+		NodeID:             id,
+		Peers:              peers,
+		ElectionTimeoutMin: 150 * time.Millisecond,
+		ElectionTimeoutMax: 300 * time.Millisecond,
+		HeartbeatInterval:  50 * time.Millisecond,
+		RPCTimeout:         100 * time.Millisecond,
+	}
+
+	newNode := raft.NewRaftNode(cfg)
+	t := c.Network.AddNode(id, newNode)
+	newNode.SetTransport(t)
+
+	// Restore persistent storage if available.
+	if store, ok := c.stores[id]; ok {
+		newNode.SetStorage(store)
+	}
+
+	if err := newNode.Start(); err != nil {
+		return nil, fmt.Errorf("failed to restart node %d: %w", id, err)
+	}
+
+	c.Nodes[oldIdx] = newNode
+	return newNode, nil
 }
 
 // Start starts all nodes in the cluster.
