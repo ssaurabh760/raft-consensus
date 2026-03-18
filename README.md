@@ -84,10 +84,16 @@ make coverage
 
 ```bash
 # Using Docker Compose
-docker-compose up --build
+docker compose up -d --build
 
-# Or locally
+# Or using the convenience scripts
 make cluster-start
+
+# Run the interactive demo
+make demo
+
+# Stop the cluster
+make cluster-stop
 ```
 
 ### Interact with the KV Store
@@ -126,6 +132,19 @@ curl localhost:8001/cluster
 │   ├── integration/       # Integration tests
 │   └── chaos/             # Chaos/fault injection tests
 └── scripts/               # Cluster management scripts
+```
+
+## Testing
+
+The project includes comprehensive tests at multiple levels:
+
+- **Unit tests** — Core logic for log, election, replication, persistence, KV store
+- **Integration tests** — Multi-node cluster tests for election, replication, fault tolerance, KV operations
+- **Chaos tests** — Random failure injection with configurable duration and node count
+
+```bash
+make test-race    # All tests with race detection
+make coverage     # Generate coverage report
 ```
 
 ## Reference
