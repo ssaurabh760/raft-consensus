@@ -150,10 +150,9 @@ func TestDualPartition(t *testing.T) {
 	}
 	time.Sleep(1 * time.Second)
 
-	// After healing, old leader should be a follower (higher term from majority side).
-	if oldLeader.GetRole() != 0 { // Check it's follower (0)
-		// It's OK if it's still leader temporarily; the important thing is cluster has 1 leader.
-	}
+	// After healing, the important thing is cluster has exactly 1 leader.
+	// The old leader may or may not have stepped down yet depending on timing.
+	_ = oldLeader.GetRole()
 	if cluster.CountLeaders() != 1 {
 		t.Errorf("expected exactly 1 leader after partition heals, got %d", cluster.CountLeaders())
 	}
