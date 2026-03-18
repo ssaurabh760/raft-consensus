@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package raft;
+
+option go_package = "github.com/saurabhsrivastava/raft-consensus-go/internal/rpc/proto";
+
+// LogEntry represents a single entry in the Raft log.
+message LogEntry {
+  int32 term = 1;
+  int32 index = 2;
+  bytes command = 3;
+}
+
+// RequestVoteRequest is sent by candidates to gather votes.
+message RequestVoteRequest {
+  int32 term = 1;          // candidate's term
+  int32 candidateId = 2;   // candidate requesting vote
+  int32 lastLogIndex = 3;  // index of candidate's last log entry
+  int32 lastLogTerm = 4;   // term of candidate's last log entry
+}
+
+// RequestVoteResponse is the response to a RequestVote RPC.
+message RequestVoteResponse {
+  int32 term = 1;          // currentTerm, for candidate to update itself
+  bool voteGranted = 2;    // true means candidate received vote
+}
+
+// AppendEntriesRequest is sent by leaders for log replication and heartbeats.
+message AppendEntriesRequest {
+  int32 term = 1;                // leader's term
+  int32 leaderId = 2;            // so follower can redirect clients
+  int32 prevLogIndex = 3;        // index of log entry immediately preceding new ones
+  int32 prevLogTerm = 4;         // term of prevLogIndex entry
+  repeated LogEntry entries = 5; // log entries to store (empty for heartbeat)
+  int32 leaderCommit = 6;        // leader's commitIndex
+}
+
+// AppendEntriesResponse is the response to an AppendEntries RPC.
+message AppendEntriesResponse {
+  int32 term = 1;    // currentTerm, for leader to update itself
+  bool success = 2;  // true if follower contained entry matching prevLogIndex and prevLogTerm
+}
+
+// RaftService defines the RPCs for inter-node communication.
+service RaftService {
+  rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+}
