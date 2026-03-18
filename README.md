@@ -8,7 +8,7 @@ Raft is a consensus algorithm designed to be understandable. It provides the sam
 
 - **Leader Election** — A new leader is elected when an existing leader fails
 - **Log Replication** — The leader accepts log entries from clients and replicates them across the cluster
-- **Safety** — If any server has applied a particular log entry to its state machine, no other server may apply a different command for the same log index
+- **Safety** — If any server has applied a particular log entry to its state machine, no other server may apply a different entry for the same log index
 
 ## Architecture
 
@@ -19,7 +19,7 @@ Raft is a consensus algorithm designed to be understandable. It provides the sam
                        │
 ┌──────────────────────▼──────────────────────────┐
 │                KV Store (State Machine)           │
-│              pkg/kvstore/kvstore.go               │
+│              pkg/kvstore/store.go                 │
 └──────────────────────┬──────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────┐
@@ -33,7 +33,7 @@ Raft is a consensus algorithm designed to be understandable. It provides the sam
 └──────────────────────┬──────────────────────────┘
                        │
 ┌──────────────────────▼──────────────────────────┐
-│              Transport Layer (gRPC)               │
+│              Transport Layer (RPC)                │
 │          internal/transport/transport.go          │
 └──────────────────────┬──────────────────────────┘
                        │
@@ -59,7 +59,6 @@ This implementation guarantees all five Raft safety properties:
 
 - Go 1.22+
 - Docker & Docker Compose (for cluster mode)
-- Protocol Buffers compiler (for regenerating proto files)
 
 ### Build
 
@@ -118,33 +117,48 @@ curl localhost:8001/cluster
 ## Project Structure
 
 ```
-├── cmd/raft/              # Entry point
+├── cmd/raft/              # Entry point for raft-node binary
 ├── internal/
-│   ├── raft/              # Core Raft state machine
-│   ├── election/          # Leader election logic
-│   ├── replication/       # Log replication
-│   ├── rpc/               # gRPC server and handlers
-│   ├── persistence/       # Persistent state storage
-│   ├── transport/         # Network transport layer
-│   └── cluster/           # Cluster management
-├── pkg/kvstore/           # Key-value store (demo application)
+│   ├── raft/              # Core Raft state machine (leader election, log replication)
+│   ├── election/          # Election timer and vote tracking
+│   ├── replication/       # Replication state management (nextIndex, matchIndex)
+│   ├── rpc/               # RPC types and client abstraction
+│   ├── persistence/       # Persistent state storage (file-based and in-memory)
+│   └── transport/         # Network transport layer (HTTP/JSON + mock for testing)
+├── pkg/kvstore/           # Key-value store state machine with HTTP API
 ├── test/
-│   ├── integration/       # Integration tests
+│   ├── integration/       # Multi-node cluster integration tests
 │   └── chaos/             # Chaos/fault injection tests
-└── scripts/               # Cluster management scripts
+├── scripts/               # Cluster management and demo scripts
+├── Dockerfile             # Multi-stage Docker build
+└── docker-compose.yml     # 5-node cluster orchestration
 ```
 
 ## Testing
 
-The project includes comprehensive tests at multiple levels:
+The project includes 130+ tests at multiple levels:
 
-- **Unit tests** — Core logic for log, election, replication, persistence, KV store
-- **Integration tests** — Multi-node cluster tests for election, replication, fault tolerance, KV operations
-- **Chaos tests** — Random failure injection with configurable duration and node count
+- **Unit tests** — Core logic for log, election, replication, persistence, transport, KV store
+- **Integration tests** — Multi-node cluster tests for election, step-down, replication, persistence/crash-recovery, heartbeat, network partitions, intermittent connectivity, KV operations
+- **Chaos tests** — Random failure injection with configurable duration, seed, and node count
+- **Benchmarks** — Log operations, election convergence, replication throughput
+- **Stress tests** — 100 concurrent command submissions with full replication verification
+
+### Test Coverage
+
+| Package | Coverage |
+|---------|----------|
+| internal/election | 97.7% |
+| internal/replication | 100% |
+| internal/persistence | 87.0% |
+| internal/transport | 75.7% |
+| internal/raft | 30.3% (integration tests cover the rest) |
+| test/integration | 78.9% |
+| test/chaos | 81.0% |
 
 ```bash
 make test-race    # All tests with race detection
-make coverage     # Generate coverage report
+make coverage     # Generate HTML coverage report
 ```
 
 ## Reference
