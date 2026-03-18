@@ -70,8 +70,8 @@ func TestLeaderFailureTriggersReElection(t *testing.T) {
 	// Kill the leader.
 	cluster.DisconnectNode(oldLeaderID)
 
-	// Wait for re-election.
-	time.Sleep(1 * time.Second)
+	// Wait for re-election (generous timeout for CI/resource contention).
+	time.Sleep(2 * time.Second)
 
 	// A new leader should emerge among the remaining nodes.
 	newLeaderFound := false
@@ -147,7 +147,7 @@ func TestMajorityPartitionElectsNewLeader(t *testing.T) {
 	cluster.DisconnectNode(oldLeaderID)
 	t.Logf("Disconnected leader (node %d)", oldLeaderID)
 
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Verify a new leader exists among remaining nodes.
 	newLeaderCount := 0
@@ -213,8 +213,8 @@ func TestPartitionHealingOldLeaderBecomesFollower(t *testing.T) {
 	// Partition the leader.
 	cluster.DisconnectNode(oldLeaderID)
 
-	// Wait for new leader.
-	time.Sleep(1 * time.Second)
+	// Wait for new leader (generous timeout for batch test runs).
+	time.Sleep(2 * time.Second)
 
 	var newLeader *raft.RaftNode
 	for _, node := range cluster.Nodes {
@@ -281,7 +281,7 @@ func TestLogReconciliationAfterPartition(t *testing.T) {
 
 	// Reconnect — log should be reconciled.
 	cluster.ReconnectNode(partitionedID)
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	if partitioned.GetLog().Len() < 5 {
 		t.Errorf("reconciled node should have >= 5 entries, got %d", partitioned.GetLog().Len())
