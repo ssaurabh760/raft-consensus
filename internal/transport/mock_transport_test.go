@@ -9,11 +9,11 @@ import (
 
 // stubHandler is a simple RPCHandler for testing.
 type stubHandler struct {
-	nodeID          int
-	voteResponse    *rpc.RequestVoteResponse
-	appendResponse  *rpc.AppendEntriesResponse
-	lastVoteReq     *rpc.RequestVoteRequest
-	lastAppendReq   *rpc.AppendEntriesRequest
+	nodeID         int
+	voteResponse   *rpc.RequestVoteResponse
+	appendResponse *rpc.AppendEntriesResponse
+	lastVoteReq    *rpc.RequestVoteRequest
+	lastAppendReq  *rpc.AppendEntriesRequest
 }
 
 func (h *stubHandler) HandleRequestVote(req *rpc.RequestVoteRequest) (*rpc.RequestVoteResponse, error) {
@@ -214,7 +214,7 @@ func TestMockNetworkCustomResponse(t *testing.T) {
 
 	handler1 := &stubHandler{nodeID: 1}
 	handler2 := &stubHandler{
-		nodeID: 2,
+		nodeID:       2,
 		voteResponse: &rpc.RequestVoteResponse{Term: 5, VoteGranted: false},
 	}
 

@@ -2,8 +2,8 @@ package election
 
 // VoteTracker tracks votes received during a leader election.
 type VoteTracker struct {
-	votes     map[int]bool // nodeID -> granted
-	quorum    int
+	votes  map[int]bool // nodeID -> granted
+	quorum int
 }
 
 // NewVoteTracker creates a tracker for an election requiring the given quorum.

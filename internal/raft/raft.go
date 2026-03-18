@@ -50,12 +50,12 @@ type RaftNode struct {
 	lastContact map[int]time.Time // last successful RPC response from each peer
 
 	// Channels.
-	applyCh       chan LogEntry // channel for delivering committed entries to the state machine
-	resetTimerCh  chan struct{} // signals to reset the election timer
-	stepDownCh    chan struct{} // signals leader/candidate to step down to follower
-	triggerAECh   chan struct{} // signals leader to send AppendEntries immediately
-	stopCh        chan struct{} // signals all goroutines to stop
-	stopped       bool
+	applyCh      chan LogEntry // channel for delivering committed entries to the state machine
+	resetTimerCh chan struct{} // signals to reset the election timer
+	stepDownCh   chan struct{} // signals leader/candidate to step down to follower
+	triggerAECh  chan struct{} // signals leader to send AppendEntries immediately
+	stopCh       chan struct{} // signals all goroutines to stop
+	stopped      bool
 
 	// Configuration.
 	config *Config
@@ -559,13 +559,11 @@ func (n *RaftNode) sendAppendEntriesToPeer(target, currentTerm, leaderID, commit
 
 		// Try to advance commitIndex.
 		n.advanceCommitIndex()
-	} else {
+	} else if n.nextIndex[target] > 1 {
 		// Decrement nextIndex and retry (log backtracking).
-		if n.nextIndex[target] > 1 {
-			n.nextIndex[target]--
-			log.Printf("[Node %d] AppendEntries rejected by %d, decrementing nextIndex to %d",
-				n.id, target, n.nextIndex[target])
-		}
+		n.nextIndex[target]--
+		log.Printf("[Node %d] AppendEntries rejected by %d, decrementing nextIndex to %d",
+			n.id, target, n.nextIndex[target])
 	}
 }
 

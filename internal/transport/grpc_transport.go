@@ -163,7 +163,7 @@ func (t *GRPCTransport) handleRequestVote(w http.ResponseWriter, r *http.Request
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // handleAppendEntries handles incoming AppendEntries RPCs.
@@ -181,5 +181,5 @@ func (t *GRPCTransport) handleAppendEntries(w http.ResponseWriter, r *http.Reque
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }

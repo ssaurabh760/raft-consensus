@@ -36,10 +36,10 @@ func (a Action) String() string {
 
 // Event records a chaos action that was taken.
 type Event struct {
-	Time     time.Duration
-	Action   Action
-	NodeID   int
-	Detail   string
+	Time   time.Duration
+	Action Action
+	NodeID int
+	Detail string
 }
 
 func (e Event) String() string {
@@ -82,14 +82,14 @@ func DefaultConfig(numNodes int) *Config {
 
 // Result contains the outcomes of a chaos test.
 type Result struct {
-	Events          []Event
-	TotalSubmits    int
-	SuccessSubmits  int
-	FinalLeader     int
-	FinalTerm       int
-	NodesConverged  bool
-	MaxLogLen       int
-	MinLogLen       int
+	Events         []Event
+	TotalSubmits   int
+	SuccessSubmits int
+	FinalLeader    int
+	FinalTerm      int
+	NodesConverged bool
+	MaxLogLen      int
+	MinLogLen      int
 }
 
 // Runner manages a chaos test execution.
@@ -239,17 +239,18 @@ func (r *Runner) performRandomAction() {
 	canReconnect := numDisconnected > 0
 
 	var action Action
-	if canDisconnect && canReconnect {
+	switch {
+	case canDisconnect && canReconnect:
 		if r.rng.Float64() < 0.5 {
 			action = ActionDisconnect
 		} else {
 			action = ActionReconnect
 		}
-	} else if canDisconnect {
+	case canDisconnect:
 		action = ActionDisconnect
-	} else if canReconnect {
+	case canReconnect:
 		action = ActionReconnect
-	} else {
+	default:
 		return
 	}
 

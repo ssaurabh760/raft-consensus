@@ -9,8 +9,8 @@ import (
 type Client struct {
 	// sender is a function that sends RPCs. It's injected to decouple
 	// the client from the transport implementation.
-	voteSender    func(ctx context.Context, target int, req *RequestVoteRequest) (*RequestVoteResponse, error)
-	appendSender  func(ctx context.Context, target int, req *AppendEntriesRequest) (*AppendEntriesResponse, error)
+	voteSender   func(ctx context.Context, target int, req *RequestVoteRequest) (*RequestVoteResponse, error)
+	appendSender func(ctx context.Context, target int, req *AppendEntriesRequest) (*AppendEntriesResponse, error)
 }
 
 // ClientTransport defines what the RPC client needs from the transport layer.

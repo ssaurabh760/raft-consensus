@@ -138,8 +138,8 @@ func TestRequestVoteDeniedLogNotUpToDate_Index(t *testing.T) {
 	req := &rpc.RequestVoteRequest{
 		Term:         3,
 		CandidateID:  2,
-		LastLogIndex: 2,   // candidate only has 2 entries
-		LastLogTerm:  2,   // same term
+		LastLogIndex: 2, // candidate only has 2 entries
+		LastLogTerm:  2, // same term
 	}
 
 	resp, err := node.HandleRequestVote(req)
@@ -525,9 +525,9 @@ func TestConfigQuorumSize(t *testing.T) {
 		expected int
 	}{
 		{peers: []int{2, 3, 4, 5}, expected: 3},       // 5-node cluster
-		{peers: []int{2, 3}, expected: 2},               // 3-node cluster
-		{peers: []int{2, 3, 4, 5, 6, 7}, expected: 4},  // 7-node cluster
-		{peers: []int{}, expected: 1},                    // single node
+		{peers: []int{2, 3}, expected: 2},             // 3-node cluster
+		{peers: []int{2, 3, 4, 5, 6, 7}, expected: 4}, // 7-node cluster
+		{peers: []int{}, expected: 1},                 // single node
 	}
 
 	for _, tt := range tests {
