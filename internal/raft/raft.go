@@ -46,6 +46,7 @@ type RaftNode struct {
 	applyCh       chan LogEntry // channel for delivering committed entries to the state machine
 	resetTimerCh  chan struct{} // signals to reset the election timer
 	stepDownCh    chan struct{} // signals leader/candidate to step down to follower
+	triggerAECh   chan struct{} // signals leader to send AppendEntries immediately
 	stopCh        chan struct{} // signals all goroutines to stop
 	stopped       bool
 
@@ -71,6 +72,7 @@ func NewRaftNode(config *Config) *RaftNode {
 		applyCh:      make(chan LogEntry, 100),
 		resetTimerCh: make(chan struct{}, 1),
 		stepDownCh:   make(chan struct{}, 1),
+		triggerAECh:  make(chan struct{}, 1),
 		stopCh:       make(chan struct{}),
 		config:       config,
 	}
@@ -96,6 +98,7 @@ func (n *RaftNode) Start() error {
 
 	n.electionTimer.Reset()
 	go n.run()
+	go n.applyCommittedEntries()
 	log.Printf("[Node %d] started as %s in term %d", n.id, n.role, n.currentTerm)
 	return nil
 }
@@ -267,14 +270,38 @@ func (n *RaftNode) runCandidate() {
 	}
 }
 
+// Submit proposes a new command to the Raft cluster.
+// Only the leader can accept client commands. Returns the log index the command
+// will be committed at, the current term, and whether this node is the leader.
+func (n *RaftNode) Submit(command interface{}) (index int, term int, isLeader bool) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.role != Leader {
+		return -1, n.currentTerm, false
+	}
+
+	entry := LogEntry{
+		Term:    n.currentTerm,
+		Command: command,
+	}
+	index = n.log.Append(entry)
+	log.Printf("[Node %d] leader appended entry at index %d, term %d", n.id, index, n.currentTerm)
+
+	// Trigger immediate replication to followers.
+	n.signalTriggerAE()
+
+	return index, n.currentTerm, true
+}
+
 // runLeader runs the leader event loop.
-// Leaders send periodic heartbeats and handle log replication.
+// Leaders send periodic heartbeats and replicate log entries to followers.
 func (n *RaftNode) runLeader() {
 	log.Printf("[Node %d] running as Leader in term %d", n.id, n.GetCurrentTerm())
 	n.electionTimer.Stop()
 
-	// Send initial heartbeat immediately.
-	n.sendHeartbeats()
+	// Send initial AppendEntries (heartbeat) immediately.
+	n.sendAppendEntriesToAll()
 
 	heartbeatTicker := time.NewTicker(n.config.HeartbeatInterval)
 	defer heartbeatTicker.Stop()
@@ -289,13 +316,17 @@ func (n *RaftNode) runLeader() {
 			return
 
 		case <-heartbeatTicker.C:
-			n.sendHeartbeats()
+			n.sendAppendEntriesToAll()
+
+		case <-n.triggerAECh:
+			n.sendAppendEntriesToAll()
 		}
 	}
 }
 
-// sendHeartbeats sends empty AppendEntries RPCs to all peers.
-func (n *RaftNode) sendHeartbeats() {
+// sendAppendEntriesToAll sends AppendEntries RPCs to all peers.
+// Sends actual log entries if the peer is behind, otherwise sends a heartbeat.
+func (n *RaftNode) sendAppendEntriesToAll() {
 	n.mu.Lock()
 	currentTerm := n.currentTerm
 	leaderID := n.id
@@ -305,47 +336,179 @@ func (n *RaftNode) sendHeartbeats() {
 	n.mu.Unlock()
 
 	for _, peerID := range peers {
-		go func(target int) {
-			n.mu.Lock()
-			prevLogIndex := n.nextIndex[target] - 1
-			prevLogTerm := 0
-			if prevLogIndex > 0 {
-				entry, err := n.log.GetEntry(prevLogIndex)
-				if err == nil {
-					prevLogTerm = entry.Term
+		go n.sendAppendEntriesToPeer(peerID, currentTerm, leaderID, commitIndex)
+	}
+}
+
+// sendAppendEntriesToPeer sends an AppendEntries RPC to a single peer.
+// Includes log entries from nextIndex[peer] onward if the peer is behind.
+func (n *RaftNode) sendAppendEntriesToPeer(target, currentTerm, leaderID, commitIndex int) {
+	n.mu.Lock()
+	if n.role != Leader || n.currentTerm != currentTerm {
+		n.mu.Unlock()
+		return
+	}
+
+	nextIdx := n.nextIndex[target]
+	prevLogIndex := nextIdx - 1
+	prevLogTerm := 0
+	if prevLogIndex > 0 {
+		entry, err := n.log.GetEntry(prevLogIndex)
+		if err == nil {
+			prevLogTerm = entry.Term
+		}
+	}
+
+	// Get entries to send (from nextIndex onward).
+	var entries []rpc.LogEntry
+	if nextIdx <= n.log.LastIndex() {
+		logEntries := n.log.GetEntriesFrom(nextIdx)
+		entries = make([]rpc.LogEntry, len(logEntries))
+		for i, e := range logEntries {
+			var cmdBytes []byte
+			if e.Command != nil {
+				switch v := e.Command.(type) {
+				case []byte:
+					cmdBytes = v
+				case string:
+					cmdBytes = []byte(v)
+				default:
+					cmdBytes = []byte(fmt.Sprintf("%v", v))
 				}
 			}
-			n.mu.Unlock()
-
-			req := &rpc.AppendEntriesRequest{
-				Term:         currentTerm,
-				LeaderID:     leaderID,
-				PrevLogIndex: prevLogIndex,
-				PrevLogTerm:  prevLogTerm,
-				Entries:      nil, // heartbeat
-				LeaderCommit: commitIndex,
+			entries[i] = rpc.LogEntry{
+				Term:    e.Term,
+				Index:   e.Index,
+				Command: cmdBytes,
 			}
+		}
+	}
+	n.mu.Unlock()
 
-			ctx, cancel := context.WithTimeout(context.Background(), n.config.RPCTimeout)
-			defer cancel()
+	req := &rpc.AppendEntriesRequest{
+		Term:         currentTerm,
+		LeaderID:     leaderID,
+		PrevLogIndex: prevLogIndex,
+		PrevLogTerm:  prevLogTerm,
+		Entries:      entries,
+		LeaderCommit: commitIndex,
+	}
 
-			resp, err := n.transport.SendAppendEntries(ctx, target, req)
+	ctx, cancel := context.WithTimeout(context.Background(), n.config.RPCTimeout)
+	defer cancel()
+
+	resp, err := n.transport.SendAppendEntries(ctx, target, req)
+	if err != nil {
+		return
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	// If no longer leader or term changed, ignore response.
+	if n.role != Leader || n.currentTerm != currentTerm {
+		return
+	}
+
+	if resp.Term > n.currentTerm {
+		log.Printf("[Node %d] AppendEntries response from %d has higher term %d, stepping down",
+			n.id, target, resp.Term)
+		n.currentTerm = resp.Term
+		n.votedFor = -1
+		n.role = Follower
+		n.leaderID = -1
+		n.signalStepDown()
+		return
+	}
+
+	if resp.Success {
+		// Update nextIndex and matchIndex for this follower.
+		newMatchIndex := prevLogIndex + len(entries)
+		if newMatchIndex > n.matchIndex[target] {
+			n.matchIndex[target] = newMatchIndex
+		}
+		n.nextIndex[target] = newMatchIndex + 1
+
+		// Try to advance commitIndex.
+		n.advanceCommitIndex()
+	} else {
+		// Decrement nextIndex and retry (log backtracking).
+		if n.nextIndex[target] > 1 {
+			n.nextIndex[target]--
+			log.Printf("[Node %d] AppendEntries rejected by %d, decrementing nextIndex to %d",
+				n.id, target, n.nextIndex[target])
+		}
+	}
+}
+
+// advanceCommitIndex checks if there exists an N such that a majority of
+// matchIndex[i] >= N, N > commitIndex, and log[N].term == currentTerm.
+// If so, sets commitIndex = N. (Raft paper Figure 2, Rules for Servers, Leaders)
+func (n *RaftNode) advanceCommitIndex() {
+	for idx := n.log.LastIndex(); idx > n.commitIndex; idx-- {
+		entry, err := n.log.GetEntry(idx)
+		if err != nil {
+			continue
+		}
+
+		// Safety: only commit entries from the current term.
+		if entry.Term != n.currentTerm {
+			continue
+		}
+
+		// Count how many servers have this entry (including leader).
+		replicaCount := 1 // leader itself
+		for _, peer := range n.peers {
+			if n.matchIndex[peer] >= idx {
+				replicaCount++
+			}
+		}
+
+		if replicaCount >= n.config.QuorumSize() {
+			log.Printf("[Node %d] advancing commitIndex from %d to %d (replicated on %d/%d nodes)",
+				n.id, n.commitIndex, idx, replicaCount, n.config.ClusterSize())
+			n.commitIndex = idx
+			return
+		}
+	}
+}
+
+// applyCommittedEntries applies committed log entries to the state machine.
+// Runs as a goroutine during leader tenure and follower state.
+func (n *RaftNode) applyCommittedEntries() {
+	for {
+		select {
+		case <-n.stopCh:
+			return
+		default:
+		}
+
+		n.mu.Lock()
+		commitIndex := n.commitIndex
+		lastApplied := n.lastApplied
+		var entriesToApply []LogEntry
+
+		for lastApplied < commitIndex {
+			lastApplied++
+			entry, err := n.log.GetEntry(lastApplied)
 			if err != nil {
+				break
+			}
+			entriesToApply = append(entriesToApply, entry)
+		}
+		n.lastApplied = lastApplied
+		n.mu.Unlock()
+
+		for _, entry := range entriesToApply {
+			select {
+			case n.applyCh <- entry:
+			case <-n.stopCh:
 				return
 			}
+		}
 
-			n.mu.Lock()
-			defer n.mu.Unlock()
-
-			if resp.Term > n.currentTerm {
-				log.Printf("[Node %d] heartbeat response has higher term %d, stepping down", n.id, resp.Term)
-				n.currentTerm = resp.Term
-				n.votedFor = -1
-				n.role = Follower
-				n.leaderID = -1
-				n.signalStepDown()
-			}
-		}(peerID)
+		// Don't busy-spin.
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -509,6 +672,14 @@ func (n *RaftNode) signalResetTimer() {
 func (n *RaftNode) signalStepDown() {
 	select {
 	case n.stepDownCh <- struct{}{}:
+	default:
+	}
+}
+
+// signalTriggerAE non-blockingly signals the leader to send AppendEntries immediately.
+func (n *RaftNode) signalTriggerAE() {
+	select {
+	case n.triggerAECh <- struct{}{}:
 	default:
 	}
 }
