@@ -35,11 +35,19 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Run tests with race detection
-        run: go test -race -v ./...
+      - name: Run unit tests with race detection
+        run: go test -race -v ./internal/... ./pkg/...
+
+      - name: Run integration tests
+        run: go test -race -v -timeout 120s ./test/integration/
+
+      - name: Run chaos tests
+        run: go test -race -v -timeout 120s ./test/chaos/
 
       - name: Run tests with coverage
-        run: go test -coverprofile=coverage.out ./...
+        run: |
+          go test -coverprofile=coverage.out ./internal/... ./pkg/...
+          go tool cover -func=coverage.out
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -58,5 +66,8 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Build
-        run: go build -v ./cmd/raft/
+      - name: Build binary
+        run: go build -v -ldflags "-s -w" -o bin/raft-node ./cmd/raft/
+
+      - name: Build Docker image
+        run: docker build -t raft-node:ci .
