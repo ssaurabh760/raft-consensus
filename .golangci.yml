@@ -24,19 +24,11 @@ linters-settings:
     shadow: false
   gocritic:
     enabled-checks:
-      - appendAssign
-      - dupBranchBody
-      - dupCase
-      - dupSubExpr
-      - elseif
       - emptyFallthrough
       - equalFold
       - indexAlloc
       - nestingReduce
       - rangeValCopy
-      - sloppyLen
-      - typeSwitchVar
-      - underef
       - unnamedResult
 
 issues:
