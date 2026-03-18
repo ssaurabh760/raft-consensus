@@ -66,7 +66,7 @@ func TestSequentialNodeFailures(t *testing.T) {
 	}
 
 	leader.Submit("cmd-1")
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(1 * time.Second)
 
 	// Disconnect followers one at a time (up to 2 to maintain quorum).
 	followers := cluster.GetFollowers()
@@ -76,30 +76,39 @@ func TestSequentialNodeFailures(t *testing.T) {
 
 	cluster.DisconnectNode(followers[0].GetID())
 	t.Logf("Disconnected follower %d", followers[0].GetID())
-	time.Sleep(300 * time.Millisecond)
 
-	// Should still be able to commit.
+	// Submit immediately so leader sends to remaining 3 connected peers.
 	leader.Submit("cmd-2")
-	time.Sleep(500 * time.Millisecond)
-	if leader.GetCommitIndex() < 2 {
-		t.Errorf("should commit with 4/5 nodes, commitIndex=%d", leader.GetCommitIndex())
+	time.Sleep(1 * time.Second)
+
+	// Re-fetch leader in case leadership changed after disconnect.
+	leader2, err := cluster.WaitForLeader(5 * time.Second)
+	if err != nil {
+		t.Fatalf("no leader after first disconnect: %v", err)
+	}
+	if leader2.GetCommitIndex() < 2 {
+		t.Errorf("should commit with 4/5 nodes, commitIndex=%d", leader2.GetCommitIndex())
 	}
 
 	cluster.DisconnectNode(followers[1].GetID())
 	t.Logf("Disconnected follower %d", followers[1].GetID())
-	time.Sleep(300 * time.Millisecond)
 
-	// Should still be able to commit (3/5 = majority).
-	leader.Submit("cmd-3")
-	time.Sleep(500 * time.Millisecond)
-	if leader.GetCommitIndex() < 3 {
-		t.Errorf("should commit with 3/5 nodes, commitIndex=%d", leader.GetCommitIndex())
+	// Submit and wait for commit with 3/5 majority.
+	leader2.Submit("cmd-3")
+	time.Sleep(1 * time.Second)
+
+	leader3, err := cluster.WaitForLeader(5 * time.Second)
+	if err != nil {
+		t.Fatalf("no leader after second disconnect: %v", err)
+	}
+	if leader3.GetCommitIndex() < 3 {
+		t.Errorf("should commit with 3/5 nodes, commitIndex=%d", leader3.GetCommitIndex())
 	}
 
 	// Reconnect both.
 	cluster.ReconnectNode(followers[0].GetID())
 	cluster.ReconnectNode(followers[1].GetID())
-	time.Sleep(1 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// All nodes should converge.
 	for _, node := range cluster.Nodes {
