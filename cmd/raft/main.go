@@ -101,20 +101,20 @@ func main() {
 	log.Printf("Shutting down node %d...", *nodeID)
 	applier.Stop()
 	node.Stop()
-	grpcTransport.Stop()
+	_ = grpcTransport.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv.Shutdown(ctx)
+	_ = srv.Shutdown(ctx)
 	log.Printf("Node %d shutdown complete", *nodeID)
 }
 
 // parsePeers parses "id=addr,id=addr" format into peer IDs and address map.
-func parsePeers(s string) ([]int, map[int]string) {
+func parsePeers(s string) (peerIDs []int, peerAddrs map[int]string) {
 	if s == "" {
 		return nil, nil
 	}
-	peerIDs := []int{}
-	peerAddrs := map[int]string{}
+	peerIDs = []int{}
+	peerAddrs = map[int]string{}
 	for _, p := range strings.Split(s, ",") {
 		parts := strings.SplitN(strings.TrimSpace(p), "=", 2)
 		if len(parts) != 2 {

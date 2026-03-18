@@ -194,5 +194,5 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err), http.StatusInternalServerError)
 		return
 	}
-	w.Write(data)
+	_, _ = w.Write(data)
 }
