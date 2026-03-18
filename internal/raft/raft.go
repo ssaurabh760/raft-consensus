@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/saurabhsrivastava/raft-consensus-go/internal/election"
+	"github.com/saurabhsrivastava/raft-consensus-go/internal/persistence"
 	"github.com/saurabhsrivastava/raft-consensus-go/internal/rpc"
 	"github.com/saurabhsrivastava/raft-consensus-go/internal/transport"
 )
@@ -41,6 +42,9 @@ type RaftNode struct {
 
 	// Transport for sending RPCs.
 	transport transport.Transport
+
+	// Persistent storage.
+	storage persistence.Storage
 
 	// Channels.
 	applyCh       chan LogEntry // channel for delivering committed entries to the state machine
@@ -87,12 +91,47 @@ func (n *RaftNode) SetTransport(t transport.Transport) {
 	n.transport = t
 }
 
+// SetStorage sets the persistent storage for the node. Must be called before Start().
+func (n *RaftNode) SetStorage(s persistence.Storage) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.storage = s
+}
+
 // Start begins the Raft node's event loop.
+// If persistent storage is configured, it restores state from the last checkpoint.
 func (n *RaftNode) Start() error {
 	n.mu.Lock()
 	if n.transport == nil {
 		n.mu.Unlock()
 		return fmt.Errorf("raft: transport not set")
+	}
+
+	// Restore persisted state if storage is configured.
+	if n.storage != nil {
+		state, err := n.storage.Load()
+		if err != nil {
+			n.mu.Unlock()
+			return fmt.Errorf("raft: failed to load persisted state: %w", err)
+		}
+		if state.CurrentTerm > 0 || state.VotedFor != -1 || len(state.Log) > 0 {
+			n.currentTerm = state.CurrentTerm
+			n.votedFor = state.VotedFor
+			// Restore log entries.
+			n.log = NewMemoryLog()
+			for _, entry := range state.Log {
+				var cmd interface{}
+				if entry.Command != nil {
+					cmd = string(entry.Command)
+				}
+				n.log.Append(LogEntry{
+					Term:    entry.Term,
+					Command: cmd,
+				})
+			}
+			log.Printf("[Node %d] restored state: term=%d, votedFor=%d, logLen=%d",
+				n.id, n.currentTerm, n.votedFor, n.log.Len())
+		}
 	}
 	n.mu.Unlock()
 
@@ -111,6 +150,41 @@ func (n *RaftNode) Stop() {
 		return
 	}
 	n.stopped = true
+
+	// Persist final state before shutting down.
+	if n.storage != nil {
+		logEntries := make([]persistence.LogEntry, n.log.Len())
+		for i := 1; i <= n.log.Len(); i++ {
+			entry, err := n.log.GetEntry(i)
+			if err != nil {
+				continue
+			}
+			var cmdBytes []byte
+			if entry.Command != nil {
+				switch v := entry.Command.(type) {
+				case []byte:
+					cmdBytes = v
+				case string:
+					cmdBytes = []byte(v)
+				default:
+					cmdBytes = []byte(fmt.Sprintf("%v", v))
+				}
+			}
+			logEntries[i-1] = persistence.LogEntry{
+				Term:    entry.Term,
+				Index:   entry.Index,
+				Command: cmdBytes,
+			}
+		}
+		state := &persistence.PersistentState{
+			CurrentTerm: n.currentTerm,
+			VotedFor:    n.votedFor,
+			Log:         logEntries,
+		}
+		if err := n.storage.Save(state); err != nil {
+			log.Printf("[Node %d] ERROR: failed to persist state on stop: %v", n.id, err)
+		}
+	}
 	n.mu.Unlock()
 
 	close(n.stopCh)
@@ -176,6 +250,7 @@ func (n *RaftNode) runCandidate() {
 	n.votedFor = n.id
 	n.leaderID = -1
 	n.votesReceived = map[int]bool{n.id: true}
+	n.persistTermAndVote()
 	currentTerm := n.currentTerm
 	peers := make([]int, len(n.peers))
 	copy(peers, n.peers)
@@ -239,6 +314,7 @@ func (n *RaftNode) runCandidate() {
 				n.currentTerm = resp.Term
 				n.votedFor = -1
 				n.role = Follower
+				n.persistTermAndVote()
 				n.mu.Unlock()
 				return
 			}
@@ -417,6 +493,7 @@ func (n *RaftNode) sendAppendEntriesToPeer(target, currentTerm, leaderID, commit
 		n.votedFor = -1
 		n.role = Follower
 		n.leaderID = -1
+		n.persistTermAndVote()
 		n.signalStepDown()
 		return
 	}
@@ -530,6 +607,7 @@ func (n *RaftNode) HandleRequestVote(req *rpc.RequestVoteRequest) (*rpc.RequestV
 		n.votedFor = -1
 		n.role = Follower
 		n.leaderID = -1
+		n.persistTermAndVote()
 		n.signalStepDown()
 	}
 
@@ -547,6 +625,7 @@ func (n *RaftNode) HandleRequestVote(req *rpc.RequestVoteRequest) (*rpc.RequestV
 			log.Printf("[Node %d] granting vote to %d for term %d", n.id, req.CandidateID, req.Term)
 			n.votedFor = req.CandidateID
 			resp.VoteGranted = true
+			n.persistTermAndVote()
 			n.signalResetTimer()
 		}
 	}
@@ -571,6 +650,7 @@ func (n *RaftNode) HandleAppendEntries(req *rpc.AppendEntriesRequest) (*rpc.Appe
 		n.currentTerm = req.Term
 		n.votedFor = -1
 		n.role = Follower
+		n.persistTermAndVote()
 		n.signalStepDown()
 	}
 
@@ -658,6 +738,17 @@ func (n *RaftNode) isLogUpToDate(candidateLastIndex, candidateLastTerm int) bool
 	}
 	// If the logs end with the same term, then whichever log is longer is more up-to-date.
 	return candidateLastIndex >= lastIndex
+}
+
+// persistTermAndVote saves currentTerm and votedFor to stable storage if configured.
+// Must be called with n.mu held.
+func (n *RaftNode) persistTermAndVote() {
+	if n.storage == nil {
+		return
+	}
+	if err := n.storage.SaveTermAndVote(n.currentTerm, n.votedFor); err != nil {
+		log.Printf("[Node %d] ERROR: failed to persist term/vote: %v", n.id, err)
+	}
 }
 
 // signalResetTimer non-blockingly signals to reset the election timer.
