@@ -46,6 +46,9 @@ type RaftNode struct {
 	// Persistent storage.
 	storage persistence.Storage
 
+	// Leader liveness tracking.
+	lastContact map[int]time.Time // last successful RPC response from each peer
+
 	// Channels.
 	applyCh       chan LogEntry // channel for delivering committed entries to the state machine
 	resetTimerCh  chan struct{} // signals to reset the election timer
@@ -332,10 +335,13 @@ func (n *RaftNode) runCandidate() {
 					n.role = Leader
 					n.leaderID = n.id
 					// Initialize leader volatile state.
+					now := time.Now()
 					nextIdx := n.log.LastIndex() + 1
+					n.lastContact = make(map[int]time.Time)
 					for _, peer := range n.peers {
 						n.nextIndex[peer] = nextIdx
 						n.matchIndex[peer] = 0
+						n.lastContact[peer] = now
 					}
 					n.mu.Unlock()
 					return
@@ -382,6 +388,10 @@ func (n *RaftNode) runLeader() {
 	heartbeatTicker := time.NewTicker(n.config.HeartbeatInterval)
 	defer heartbeatTicker.Stop()
 
+	// Check liveness less frequently than heartbeats.
+	livenessTicker := time.NewTicker(n.config.ElectionTimeoutMin / 2)
+	defer livenessTicker.Stop()
+
 	for {
 		select {
 		case <-n.stopCh:
@@ -396,8 +406,44 @@ func (n *RaftNode) runLeader() {
 
 		case <-n.triggerAECh:
 			n.sendAppendEntriesToAll()
+
+		case <-livenessTicker.C:
+			if !n.hasRecentQuorum() {
+				log.Printf("[Node %d] leader lost contact with majority, stepping down", n.id)
+				n.mu.Lock()
+				n.role = Follower
+				n.leaderID = -1
+				n.mu.Unlock()
+				n.signalStepDown()
+				return
+			}
 		}
 	}
+}
+
+// hasRecentQuorum checks if the leader has heard from a majority of peers
+// within the election timeout window.
+func (n *RaftNode) hasRecentQuorum() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+
+	if n.lastContact == nil {
+		return true
+	}
+
+	threshold := n.config.ElectionTimeoutMin
+	now := time.Now()
+	reachable := 1 // count self
+
+	for _, peer := range n.peers {
+		if lastTime, ok := n.lastContact[peer]; ok {
+			if now.Sub(lastTime) < threshold {
+				reachable++
+			}
+		}
+	}
+
+	return reachable >= n.config.QuorumSize()
 }
 
 // sendAppendEntriesToAll sends AppendEntries RPCs to all peers.
@@ -496,6 +542,11 @@ func (n *RaftNode) sendAppendEntriesToPeer(target, currentTerm, leaderID, commit
 		n.persistTermAndVote()
 		n.signalStepDown()
 		return
+	}
+
+	// Record successful contact regardless of Success value — the peer responded.
+	if n.lastContact != nil {
+		n.lastContact[target] = time.Now()
 	}
 
 	if resp.Success {
