@@ -46,14 +46,26 @@ clean:
 	rm -rf $(BUILD_DIR)
 	rm -f coverage.out coverage.html
 
-# Start a local 5-node cluster
+# Start a 5-node cluster via Docker Compose
 cluster-start:
-	./scripts/start_cluster.sh
+	./scripts/cluster-start.sh
 
-# Stop the local cluster
+# Stop the cluster
 cluster-stop:
-	./scripts/stop_cluster.sh
+	./scripts/cluster-stop.sh
 
 # Run the demo
 demo:
 	./scripts/demo.sh
+
+# Docker build
+docker-build:
+	docker compose build
+
+# Docker up
+docker-up:
+	docker compose up -d
+
+# Docker down
+docker-down:
+	docker compose down
